@@ -1,10 +1,13 @@
+
 #include "httpServer.h"
 #include "httpRequest.h"
+#include "json.h"
 #include "stringTools.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <netinet/in.h>
+#include <regex>
 #include <stdio.h>
 #include <string.h>
 #include <string>
@@ -32,20 +35,21 @@ void Server::threadWorker() {
 
     Request req;
     Response res(current);
-    std::string message;
     try {
 
-      read(current, &message, &req);
-
+      read(current, &req);
+      // std::cout << req.getPath() << std::endl;
       m_pathToHandlerMap.at(req.getPath())(req, res);
 
     } catch (std::out_of_range &e) {
+
       std::cout << "404 error" << std::endl;
       write(current, resp404.c_str(), resp404.length());
 
     } catch (std::exception &e) {
       std::cout << "error reading: " << e.what() << std::endl;
       write(current, "Error", sizeof("Error"));
+    } catch (...) {
     }
     // std::cout << "---------------------------------" << std::endl;
     // std::cout << req.getMethod() << std::endl;
@@ -56,66 +60,68 @@ void Server::threadWorker() {
   }
 }
 
-void Server::read(int _fd, std::string *out, Request *req) {
-  size_t ind{};
-  size_t tmp{};
-  std::vector<std::string> lines, tmpV;
-  char *buff = new char[1000];
-  bool insideHeader = true;
-  bool firstLine = true;
+void Server::read(int _fd, Request *req) {
+
+  std::string message(15000, 0);
+
+  size_t ind = ::read(_fd, &message[0], 15000);
+
+  message.erase(ind, ind + 15000);
+
+  if (ind == 0) {
+    throw nullptr;
+  }
+
+  // std::regex contentTypeRegex("(content-length)( )*(:)( )*([0-9]+)",
+  //                             std::regex_constants::ECMAScript |
+  //                                 std::regex_constants::icase);
+  // std::sregex_iterator regItr(message.begin() + ind, message.end(),
+  //                             contentTypeRegex);
+  // if (regItr != std::sregex_iterator()) {
+  //   std::string line = regItr->str();
+  //   std::string::size_type colon = line.find(":");
+  //   if (colon == std::string::npos) {
+  //     throw std::runtime_error(
+  //         std::string("request header is not valid at: " + line).c_str());
+  //   }
+  //   req->setContentLength(std::string(line.begin() + colon + 1, line.end()));
+  // }
+
+  bool found{false};
+
+  std::string::size_type pos{};
+  std::string::size_type last_pos{};
+  std::string tmp;
+
   do {
-    tmp = ::read(_fd, buff, 1000);
-    out->append(buff, tmp);
-    ind += tmp;
+    pos = message.find("\n", last_pos);
 
-    string::split(out, "\n", lines);
-    if (firstLine) {
-      std::transform(lines[0].begin(), lines[0].end(), lines[0].begin(),
-                     [](unsigned char c) { return std::toupper(c); });
-      string::split(&lines[0], " ", tmpV);
-      if (tmpV.size() != 3)
-        throw std::invalid_argument(
-            std::string("first line of http request is not valid: " + lines[0])
-                .c_str());
-
-      req->setMethod(tmpV[0]);
-      req->setPath(tmpV[1]);
-
-      if (tmpV[2] != "HTTP/1.1" && tmpV[2] != "HTTP/1.0") {
-        std::cout << tmpV[2] << std::endl;
-        throw std::invalid_argument(
-            "protocol is not valid, just http/1.1 and http/1.0 is supported");
+    found = pos != std::string::npos;
+    if (found) {
+      tmp.assign(message.begin() + last_pos, message.begin() + pos);
+      string::trim(&tmp);
+      if (tmp.size())
+        if (last_pos == 0)
+          req->setMethodAndPath(tmp);
+        else
+          req->setHeader(tmp);
+      else {
+        break;
       }
-      firstLine = false;
-      tmpV.clear();
+      last_pos = pos + 1;
+    } else if (last_pos) {
+      tmp.assign(message.begin() + last_pos, message.end());
+      string::trim(&tmp);
+      if (tmp.size())
+        req->setHeader(tmp);
+    } else {
+      req->setMethodAndPath(message);
+      return;
     }
-    for (uint8_t i{1}; i < lines.size(); i++) {
-      if (insideHeader) {
-        if (lines[i].empty()) {
-          insideHeader = false;
-        } else {
-          auto pos = lines[i].find(":");
-          if (pos != std::string::npos) {
-            std::string key{lines[i].begin(), lines[i].begin() + pos};
-            string::tolower(&key);
-            string::trim(&key);
-            std::string value{lines[i].begin() + pos + 1, lines[i].end()};
-            string::tolower(&value);
-            string::trim(&value);
-            req->setHeader(key, value);
-            if (key == "content-type") {
-              req->setContentType(value);
-            }
-          }
-        }
-      }
-    }
+  } while (found);
 
-    lines.clear();
-
-  } while (tmp == 1000);
-
-  delete[] buff;
+  req->setBody(
+      std::string(message, pos + 1, pos + 1 + req->getContentLength()));
 }
 
 Server::Server() {
@@ -129,8 +135,8 @@ Server::Server() {
          "text/html;charset=UTF-8\nContent-Length:" +
          std::to_string(html.length()) + "\n\n" + html;
 
-  resp404 =
-      "HTTP/1.1 404 Not Found\nContent-Type:text/plain\nContent-Length:0\n\n";
+  resp404 = "HTTP/1.1 404 Not Found\nContent-Type: "
+            "text/plain\nContent-Length:9\n\nNot Found";
   alive = true;
 }
 

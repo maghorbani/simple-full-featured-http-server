@@ -21,5 +21,18 @@ public:
       return "";
     }
   }
+  static std::string generateHttpHeaders(int status, std::string contentType,
+                                         size_t len) {
+    return std::string("HTTP/1.1 " + std::to_string(status) + " " +
+                       statusReason(status) +
+                       "\n"
+                       "Content-Type: " +
+                       contentType +
+                       ";charset=UTF-8\n"
+                       "Content-Length: " +
+                       std::to_string(len) +
+                       "\n"
+                       "\n");
+  }
 };
 } // namespace http

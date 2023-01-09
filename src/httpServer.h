@@ -27,7 +27,7 @@ class Server {
   std::condition_variable cv;
 
   void threadWorker();
-  void read(int, std::string *, Request *);
+  void read(int, Request *);
 
   std::mutex m_acceptor_mutex;
   std::mutex m_responder_mutex;
