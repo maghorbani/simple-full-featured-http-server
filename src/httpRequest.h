@@ -5,6 +5,7 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <regex>
 #include <string>
 namespace http {
 enum method { GET, DELETE, POST, PUT, PATCH };
@@ -15,6 +16,8 @@ class Request {
   std::string m_contentType;
   size_t m_contentLength{};
   json::ptr m_json;
+  std::map<std::string, std::string> m_form;
+  std::string m_multiPartBoundary;
 
 public:
   Request() : m_json(nullptr) {}
@@ -22,6 +25,21 @@ public:
     string::tolower(&k);
     if (k == "content-type") {
       string::tolower(&v);
+
+      std::vector<std::string> tmp;
+      string::split(&v, ";", tmp);
+      if (tmp[0] == "multipart/form-data") {
+        if (tmp.size() != 2) {
+          throw std::invalid_argument("content-type is not valid");
+        }
+        auto pos = tmp[1].find("=");
+        if (pos == std::string::npos) {
+          throw std::invalid_argument("content-type is not valid");
+        }
+        m_multiPartBoundary.assign(tmp[1], pos + 1, tmp[1].size() - pos - 1);
+        v = tmp[0];
+      }
+
       setContentType(v);
     }
     if (k == "content-length") {
@@ -121,9 +139,45 @@ public:
   }
   size_t getContentLength() { return m_contentLength; }
 
+  void addFormItem(std::string &v) {
+    std::string::size_type assignment = v.find("=");
+    if (assignment == std::string::npos) {
+      throw std::runtime_error(
+          std::string("form data is not valid: " + v).c_str());
+    }
+    std::string key{v, 0, assignment};
+    std::string val{v, assignment + 1, v.size()};
+    // string::trim(&key);
+    // string::trim(&val);
+    m_form[key] = val;
+  }
   void setBody(std::string &&b) {
+    std::regex reg(
+        ".*Content-Disposition:\\s*form-data;\\s*name=\\\"(.*)\\\"\\s*(.*)\\s*",
+        std::regex_constants::ECMAScript | std::regex_constants::icase);
+
     if (m_contentType == "application/json") {
       m_json = json::parse(b);
+    } else if (m_contentType == "application/x-www-form-urlencoded") {
+      std::vector<std::string> tmp;
+      b = string::urlDecode(b);
+      string::split(&b, "&", tmp);
+      for (std::string &item : tmp) {
+        addFormItem(item);
+      }
+    } else if (m_contentType == "multipart/form-data") {
+      std::string needle{"--" + m_multiPartBoundary};
+      std::vector<std::string> tmp;
+      string::split(&b, needle, tmp);
+      for (std::string &item : tmp) {
+        if (item.empty() || item == "--")
+          continue;
+
+        std::smatch m;
+        if (std::regex_match(item, m, reg)) {
+          m_form[m[1]] = m[2];
+        }
+      }
     }
   }
 

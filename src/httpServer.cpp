@@ -65,8 +65,7 @@ void Server::read(int _fd, Request *req) {
   std::string message(15000, 0);
 
   size_t ind = ::read(_fd, &message[0], 15000);
-
-  message.erase(ind, ind + 15000);
+  message.erase(ind);
 
   if (ind == 0) {
     throw nullptr;
@@ -119,9 +118,8 @@ void Server::read(int _fd, Request *req) {
       return;
     }
   } while (found);
-
-  req->setBody(
-      std::string(message, pos + 1, pos + 1 + req->getContentLength()));
+  std::cout << message << std::endl;
+  req->setBody(std::string(message, pos + 1, req->getContentLength()));
 }
 
 Server::Server() {
