@@ -16,59 +16,113 @@
 #include <thread>
 #include <unistd.h>
 namespace http {
-void Server::threadWorker() {
+void Server::threadWorker(std::mutex *_mutex, std::mutex *_map) {
   while (true) {
     {
-      std::lock_guard<std::mutex> lk{m_responder_mutex};
+      _mutex->lock();
       if (client_sockets.empty()) {
-        std::unique_lock<std::mutex> lk{client_sockets_mutex};
-        cv.wait(lk);
+        std::unique_lock<std::mutex> _lk{*_map};
+        if (client_sockets.empty())
+          cv.wait_for(_lk, std::chrono::milliseconds(10));
+        if (client_sockets.empty()) {
+          _mutex->unlock();
+          continue;
+        }
       }
+      _mutex->unlock();
     }
+
     if (!alive)
       break;
 
-    client_sockets_mutex.lock();
+    _map->lock();
+    if (client_sockets.empty()) {
+      _map->unlock();
+      continue;
+    }
     int current{std::move(client_sockets.front())};
     client_sockets.pop();
-    client_sockets_mutex.unlock();
+    _map->unlock();
 
     Request req;
-    Response res(current);
+    Response res(current, &m_socket_mutex);
+    // std::thread t([&]() {
     try {
-
       read(current, &req);
-      // std::cout << req.getPath() << std::endl;
-      m_pathToHandlerMap.at(req.getPath())(req, res);
+      m_pathToHandlerMap.at({req.getPath(), req.getMethod()})(req, res);
+      m_socket_mutex.lock();
+      close(current);
+      m_socket_mutex.unlock();
+    } catch (std::length_error &e) {
+      // std::cout << "length: " << e.what() << std::endl;
+      if (e.what() == "large payload")
+        try {
 
+          res.status(400).write(e.what());
+        } catch (...) {
+        }
+      m_socket_mutex.lock();
+      close(current);
+      m_socket_mutex.unlock();
     } catch (std::out_of_range &e) {
-
-      std::cout << "404 error" << std::endl;
-      write(current, resp404.c_str(), resp404.length());
+      // std::cout << req.getPath() << ": 404 error " << e.what() << std::endl;
+      try {
+        res.status(404).write("not found");
+      } catch (...) {
+      }
+      m_socket_mutex.lock();
+      close(current);
+      m_socket_mutex.unlock();
 
     } catch (std::exception &e) {
-      std::cout << "error reading: " << e.what() << std::endl;
-      write(current, "Error", sizeof("Error"));
+      // std::cout << "error reading: " << e.what() << std::endl;
+      try {
+        res.status(400).write(e.what());
+      } catch (...) {
+      }
+      m_socket_mutex.lock();
+      close(current);
+      m_socket_mutex.unlock();
     } catch (...) {
+      // std::cout << "unknown" << std::endl;
+      try {
+        res.status(500).write("Internal Server Error");
+      } catch (...) {
+      }
+      m_socket_mutex.lock();
+      close(current);
+      m_socket_mutex.unlock();
     }
-    // std::cout << "---------------------------------" << std::endl;
-    // std::cout << req.getMethod() << std::endl;
-    // std::cout << req.getPath() << std::endl;
-    // req.printHeaders();
 
-    close(current);
+    // });
+
+    // t.detach();
   }
 }
 
 void Server::read(int _fd, Request *req) {
 
-  std::string message(15000, 0);
+  std::string message;
+  size_t ind = 0, tmp_ind = -1;
+  while (true) {
+    if (tmp_ind == 0 || tmp_ind < 2048)
+      break;
+    if (ind >= 15000) {
+      throw std::length_error("large payload");
+    }
+    message.append(2048, 0);
 
-  size_t ind = ::read(_fd, &message[0], 15000);
-  message.erase(ind);
+    tmp_ind = ::read(_fd, &message[ind], 2048);
 
-  if (ind == 0) {
-    throw nullptr;
+    if (tmp_ind > 2048) {
+      throw std::length_error("bad payload");
+    }
+    ind += tmp_ind;
+    if (tmp_ind != 0)
+      message.erase(ind);
+  }
+  if (tmp_ind == 0 && ind == 0) {
+    throw std::length_error("empty payload");
   }
 
   // std::regex contentTypeRegex("(content-length)( )*(:)( )*([0-9]+)",
@@ -118,7 +172,10 @@ void Server::read(int _fd, Request *req) {
       return;
     }
   } while (found);
-  std::cout << message << std::endl;
+  if (req->getPath() == "") {
+    std::cout << "message: " << message << std::endl;
+  }
+
   req->setBody(std::string(message, pos + 1, req->getContentLength()));
 }
 
@@ -139,13 +196,17 @@ Server::Server() {
 }
 
 Server::~Server() {
+  std::cout << "~Server" << std::endl;
   {
     std::lock_guard<std::mutex> guard(this->m_acceptor_mutex);
     alive = false;
   }
   cv.notify_all();
   std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  { std::lock_guard<std::mutex> lk(this->m_responder_mutex); }
+  for (std::mutex *m : m_responder_mutexes) {
+    std::lock_guard<std::mutex> lk(*m);
+    delete m;
+  }
   if (shutdown(m_socket, SHUT_RDWR) < 0) {
     std::cout << "error shutting down";
   }
@@ -174,14 +235,18 @@ void Server::listen(uint16_t port) {
     throw std::runtime_error(
         std::string("error binding " + std::to_string(res)).c_str());
   }
-  res = ::listen(m_socket, 100);
+  res = ::listen(m_socket, 10000);
   if (res != 0) {
     throw std::runtime_error("error listening");
   }
   int new_socket;
 
-  std::thread responder([&]() { threadWorker(); });
-  responder.detach();
+  for (int i{}; i < 1; i++) {
+    m_responder_mutexes.push_back(new std::mutex());
+    std::thread t(
+        [&]() { threadWorker(m_responder_mutexes.back(), &m_map_mutex); });
+    t.detach();
+  }
 
   std::thread acceptor([&]() {
     struct timeval tv;
@@ -195,7 +260,7 @@ void Server::listen(uint16_t port) {
       fd_set rdfs;
 
       tv.tv_sec = 1;
-      tv.tv_usec = 10000;
+      tv.tv_usec = 1000;
       FD_SET(m_socket, &rdfs);
       int r = select(m_socket + 1, &rdfs, nullptr, nullptr, &tv);
       if (r == -1) {
@@ -203,10 +268,14 @@ void Server::listen(uint16_t port) {
       }
       if (r) {
 
+        m_socket_mutex.lock();
         new_socket = accept(m_socket, nullptr, nullptr);
-        client_sockets_mutex.lock();
+
+        m_socket_mutex.unlock();
+
+        m_map_mutex.lock();
         client_sockets.push(new_socket);
-        client_sockets_mutex.unlock();
+        m_map_mutex.unlock();
         cv.notify_one();
       }
     }
@@ -214,12 +283,28 @@ void Server::listen(uint16_t port) {
 
   acceptor.detach();
 }
-void Server::Get(std::string path, RequestHandler h) {
+
+void Server::get(std::string p, RequestHandler h) {
+  listener(p, Request::GET, h);
+}
+void Server::post(std::string p, RequestHandler h) {
+  listener(p, Request::POST, h);
+}
+void Server::put(std::string p, RequestHandler h) {
+  listener(p, Request::PUT, h);
+}
+void Server::patch(std::string p, RequestHandler h) {
+  listener(p, Request::PATCH, h);
+}
+void Server::del(std::string p, RequestHandler h) {
+  listener(p, Request::DELETE, h);
+}
+void Server::listener(std::string path, Request::method m, RequestHandler &h) {
   string::trim(&path);
   string::tolower(&path);
-  if (m_pathToHandlerMap.contains(path)) {
+  if (m_pathToHandlerMap.contains({path, m})) {
     throw std::invalid_argument("path already exists");
   }
-  m_pathToHandlerMap.emplace(path, h);
+  m_pathToHandlerMap[{path, m}] = h;
 }
 } // namespace http

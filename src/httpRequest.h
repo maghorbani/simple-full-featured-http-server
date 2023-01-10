@@ -8,8 +8,12 @@
 #include <regex>
 #include <string>
 namespace http {
-enum method { GET, DELETE, POST, PUT, PATCH };
 class Request {
+public:
+  enum method { GET, DELETE, POST, PUT, PATCH };
+  typedef std::shared_ptr<Request> ptr;
+
+private:
   std::map<std::string, std::string> m_headers;
   method m_method;
   std::string m_path;
@@ -20,7 +24,26 @@ class Request {
   std::string m_multiPartBoundary;
 
 public:
-  Request() : m_json(nullptr) {}
+  Request() : m_json(nullptr) {
+    m_headers.clear();
+    m_path.clear();
+    m_contentLength = 0;
+    m_contentType.clear();
+    m_form.clear();
+    m_multiPartBoundary.clear();
+  }
+  Request(Request &r) {
+    m_contentType = r.m_contentType;
+    m_contentLength = r.m_contentLength;
+    m_method = r.m_method;
+    m_path = r.m_path;
+    m_headers = r.m_headers;
+    m_form = r.m_form;
+    m_multiPartBoundary = r.m_multiPartBoundary;
+    if (r.m_contentType == "application/json") {
+      m_json = r.m_json;
+    }
+  }
   void setHeader(std::string &k, std::string &v) {
     string::tolower(&k);
     if (k == "content-type") {
@@ -152,9 +175,6 @@ public:
     m_form[key] = val;
   }
   void setBody(std::string &&b) {
-    std::regex reg(
-        ".*Content-Disposition:\\s*form-data;\\s*name=\\\"(.*)\\\"\\s*(.*)\\s*",
-        std::regex_constants::ECMAScript | std::regex_constants::icase);
 
     if (m_contentType == "application/json") {
       m_json = json::parse(b);
@@ -166,6 +186,10 @@ public:
         addFormItem(item);
       }
     } else if (m_contentType == "multipart/form-data") {
+      std::regex reg(".*Content-Disposition:\\s*form-data;\\s*name=\\\"(.*)"
+                     "\\\"\\s*(.*)\\s*",
+                     std::regex_constants::ECMAScript |
+                         std::regex_constants::icase);
       std::string needle{"--" + m_multiPartBoundary};
       std::vector<std::string> tmp;
       string::split(&b, needle, tmp);

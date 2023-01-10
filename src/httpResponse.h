@@ -3,15 +3,18 @@
 
 #include "headerHelpers.h"
 #include <iostream>
+#include <mutex>
 #include <unistd.h>
 namespace http {
 class Response {
+
+  std::mutex *m_socket_mutex;
   int m_socket;
   std::string m_contentType;
   int m_status = 200;
 
 public:
-  Response(int _fd) {
+  Response(int _fd, std::mutex *_m) : m_socket_mutex(_m) {
     m_socket = _fd;
     m_contentType = "text/plain";
   }
@@ -43,8 +46,10 @@ public:
   void write(const char *bin, size_t len) {
     std::string resp =
         headerHelpers::generateHttpHeaders(m_status, m_contentType, len);
+    m_socket_mutex->lock();
     int h = ::write(m_socket, resp.c_str(), resp.length());
     int r = ::write(m_socket, bin, len);
+    m_socket_mutex->unlock();
     if (r == -1 || h == -1) {
       throw std::runtime_error("error writing response");
     }
