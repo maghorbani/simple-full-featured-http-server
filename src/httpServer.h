@@ -23,8 +23,6 @@ class Server {
   sockaddr_in m_address;
   std::queue<int> client_sockets;
   bool alive;
-  std::string resp;
-  std::string resp404;
   std::condition_variable cv;
 
   void threadWorker(std::mutex *, std::mutex *);

@@ -46,6 +46,7 @@ public:
   json(int64_t);
   json(std::string);
   json(std::string &&);
+  json(const char *);
   json(bool);
   ~json();
 
@@ -67,6 +68,9 @@ public:
   size_t size();
   bool has(std::string);
 
+  void push_back(json &);
+  // void push_back(json &&);
+
   json &operator[](const std::string);
   json &operator[](size_t);
 
@@ -83,6 +87,11 @@ public:
   static json object() {
     json out;
     out.m_type = type_object;
+    return out;
+  }
+  static json array() {
+    json out;
+    out.m_type = type_array;
     return out;
   }
 

@@ -44,64 +44,96 @@ void Server::threadWorker(std::mutex *_mutex, std::mutex *_map) {
     client_sockets.pop();
     _map->unlock();
 
+    if (current <= 0)
+      continue;
+
     Request req;
     Response res(current, &m_socket_mutex);
-    // std::thread t([&]() {
+
     try {
       read(current, &req);
-      m_pathToHandlerMap.at({req.getPath(), req.getMethod()})(req, res);
-      m_socket_mutex.lock();
-      close(current);
-      m_socket_mutex.unlock();
     } catch (std::length_error &e) {
-      // std::cout << "length: " << e.what() << std::endl;
       if (e.what() == "large payload")
         try {
-
           res.status(400).write(e.what());
         } catch (...) {
         }
-      m_socket_mutex.lock();
       close(current);
-      m_socket_mutex.unlock();
-    } catch (std::out_of_range &e) {
-      // std::cout << req.getPath() << ": 404 error " << e.what() << std::endl;
-      try {
-        res.status(404).write("not found");
-      } catch (...) {
-      }
-      m_socket_mutex.lock();
-      close(current);
-      m_socket_mutex.unlock();
-
+      continue;
     } catch (std::exception &e) {
-      // std::cout << "error reading: " << e.what() << std::endl;
       try {
         res.status(400).write(e.what());
       } catch (...) {
       }
-      m_socket_mutex.lock();
       close(current);
-      m_socket_mutex.unlock();
+      continue;
     } catch (...) {
-      // std::cout << "unknown" << std::endl;
       try {
         res.status(500).write("Internal Server Error");
       } catch (...) {
       }
-      m_socket_mutex.lock();
       close(current);
-      m_socket_mutex.unlock();
+      continue;
+    }
+    RequestHandler h;
+
+    try {
+      h = m_pathToHandlerMap.at({req.getPath(), req.getMethod()});
+    } catch (std::out_of_range &e) {
+
+      try {
+        h = m_pathToHandlerMap.at({"*", req.getMethod()});
+      } catch (...) {
+        res.status(404).write("not found");
+        continue;
+      }
+    } catch (...) {
+      try {
+        res.status(500).write("Internal Server Error");
+      } catch (...) {
+      }
+      close(current);
+      continue;
+    }
+    try {
+      h(req, res);
+    } catch (std::exception &e) {
+      try {
+        res.status(400).write(e.what());
+      } catch (...) {
+      }
+      close(current);
+      continue;
+    } catch (...) {
+      try {
+        res.status(500).write("Internal Server Error");
+      } catch (...) {
+      }
+      close(current);
+      continue;
     }
 
-    // });
-
-    // t.detach();
+    close(current);
   }
 }
 
 void Server::read(int _fd, Request *req) {
 
+  // waiting for the socket to be ready to read from
+  fd_set _fd_set;
+  FD_ZERO(&_fd_set);
+  FD_SET(_fd, &_fd_set);
+  struct timeval tv;
+  tv.tv_sec = 0;
+  tv.tv_usec = 100000;
+  int res = select(_fd + 1, &_fd_set, nullptr, nullptr, &tv);
+  // if it was not ready after a while, properly is was an empty message and we
+  // discard it
+  if (res <= 0)
+    throw std::length_error("empty message");
+
+  // reading the whole message in chunks of size 1000 bytes
+  // but there is a limit of 15000 bytes
   std::string message;
   size_t ind = 0, tmp_ind = -1;
   while (true) {
@@ -125,23 +157,9 @@ void Server::read(int _fd, Request *req) {
     throw std::length_error("empty payload");
   }
 
-  // std::regex contentTypeRegex("(content-length)( )*(:)( )*([0-9]+)",
-  //                             std::regex_constants::ECMAScript |
-  //                                 std::regex_constants::icase);
-  // std::sregex_iterator regItr(message.begin() + ind, message.end(),
-  //                             contentTypeRegex);
-  // if (regItr != std::sregex_iterator()) {
-  //   std::string line = regItr->str();
-  //   std::string::size_type colon = line.find(":");
-  //   if (colon == std::string::npos) {
-  //     throw std::runtime_error(
-  //         std::string("request header is not valid at: " + line).c_str());
-  //   }
-  //   req->setContentLength(std::string(line.begin() + colon + 1, line.end()));
-  // }
-
+  // spliting the message with newlines
+  // and continuing it till we reach an empty line.
   bool found{false};
-
   std::string::size_type pos{};
   std::string::size_type last_pos{};
   std::string tmp;
@@ -172,28 +190,12 @@ void Server::read(int _fd, Request *req) {
       return;
     }
   } while (found);
-  if (req->getPath() == "") {
-    std::cout << "message: " << message << std::endl;
-  }
 
+  // so header is ended, reading body and setting it to request instance
   req->setBody(std::string(message, pos + 1, req->getContentLength()));
 }
 
-Server::Server() {
-  std::string html =
-      "<div style=\"display:flex; width:600px;justify-content:space-between\">"
-      "<div style=\"width: 150px; height: 150px;background-color:blue\"></div>"
-      "<div style=\"width: 150px; height: 150px;background-color:red\"></div>"
-      "</div>";
-
-  resp = "HTTP/1.1 200 OK\nContent-Type: "
-         "text/html;charset=UTF-8\nContent-Length:" +
-         std::to_string(html.length()) + "\n\n" + html;
-
-  resp404 = "HTTP/1.1 404 Not Found\nContent-Type: "
-            "text/plain\nContent-Length:9\n\nNot Found";
-  alive = true;
-}
+Server::Server() { alive = true; }
 
 Server::~Server() {
   std::cout << "~Server" << std::endl;
@@ -241,7 +243,7 @@ void Server::listen(uint16_t port) {
   }
   int new_socket;
 
-  for (int i{}; i < 1; i++) {
+  for (int i{}; i < 10; i++) {
     m_responder_mutexes.push_back(new std::mutex());
     std::thread t(
         [&]() { threadWorker(m_responder_mutexes.back(), &m_map_mutex); });
@@ -259,8 +261,9 @@ void Server::listen(uint16_t port) {
       }
       fd_set rdfs;
 
-      tv.tv_sec = 1;
-      tv.tv_usec = 1000;
+      tv.tv_sec = 0;
+      tv.tv_usec = 10000;
+      FD_ZERO(&rdfs);
       FD_SET(m_socket, &rdfs);
       int r = select(m_socket + 1, &rdfs, nullptr, nullptr, &tv);
       if (r == -1) {
@@ -268,10 +271,12 @@ void Server::listen(uint16_t port) {
       }
       if (r) {
 
-        m_socket_mutex.lock();
         new_socket = accept(m_socket, nullptr, nullptr);
 
-        m_socket_mutex.unlock();
+        if (new_socket <= 0) {
+          std::cout << "accept error" << std::endl;
+          continue;
+        }
 
         m_map_mutex.lock();
         client_sockets.push(new_socket);
@@ -282,6 +287,8 @@ void Server::listen(uint16_t port) {
   });
 
   acceptor.detach();
+
+  std::cout << "listening on port " << port << std::endl;
 }
 
 void Server::get(std::string p, RequestHandler h) {

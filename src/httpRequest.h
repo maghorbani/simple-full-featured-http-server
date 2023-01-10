@@ -16,7 +16,9 @@ public:
 private:
   std::map<std::string, std::string> m_headers;
   method m_method;
-  std::string m_path;
+  std::string m_path, m_path_not_lowered;
+  std::string m_query;
+  std::map<std::string, std::string> m_quey_map;
   std::string m_contentType;
   size_t m_contentLength{};
   json::ptr m_json;
@@ -31,6 +33,9 @@ public:
     m_contentType.clear();
     m_form.clear();
     m_multiPartBoundary.clear();
+    m_query.clear();
+    m_quey_map.clear();
+    m_path_not_lowered.clear();
   }
   Request(Request &r) {
     m_contentType = r.m_contentType;
@@ -40,6 +45,9 @@ public:
     m_headers = r.m_headers;
     m_form = r.m_form;
     m_multiPartBoundary = r.m_multiPartBoundary;
+    m_query = r.m_query;
+    m_quey_map = r.m_quey_map;
+    m_path_not_lowered = r.m_path_not_lowered;
     if (r.m_contentType == "application/json") {
       m_json = r.m_json;
     }
@@ -76,6 +84,27 @@ public:
     setHeader(k, v);
   }
 
+  void setQuery(std::string &&q) {
+    m_query = q;
+    m_query = string::urlDecode(m_query);
+    std::vector<std::string> tmp;
+    string::split(&m_query, "&", tmp);
+    size_t assignment;
+    for (std::string &item : tmp) {
+      assignment = item.find("=");
+      if (assignment != std::string::npos) {
+        std::string key{item, 0, assignment};
+        std::string val{};
+        if (assignment < item.length() - 1)
+          val.assign(item, assignment + 1, item.length());
+        m_quey_map[key] = val;
+      }
+    }
+  }
+
+  std::map<std::string, std::string> getQueryMap() { return m_quey_map; }
+  std::string getQuery() { return m_query; }
+
   void setHeader(std::string &v) {
     std::string::size_type colon = v.find(":");
     if (colon == std::string::npos) {
@@ -97,6 +126,7 @@ public:
 
   void setMethod(method m) { m_method = m; }
   void setMethod(std::string &m) {
+    string::tolower(&m);
     if (m == "get")
       m_method = GET;
     else if (m == "post")
@@ -115,13 +145,21 @@ public:
   method getMethod() { return m_method; }
 
   void setPath(std::string &p) {
-    m_path = p;
+    size_t qm = p.find("?", 0);
+
+    m_path.assign(p, 0, qm);
+    if (qm != std::string::npos) {
+      setQuery(std::string(p, qm + 1, p.size()));
+    }
+    m_path = string::urlDecode(m_path);
+    m_path_not_lowered.assign(m_path);
     string::tolower(&m_path);
   }
   std::string getPath() { return m_path; }
+  std::string getPathNotLowered() { return m_path_not_lowered; }
 
   void setMethodAndPath(std::string &l) {
-    string::tolower(&l);
+    // string::tolower(&l);
     std::vector<std::string> v;
     string::split(&l, " ", v);
     if (v.size() != 3)
@@ -131,6 +169,7 @@ public:
     setMethod(v[0]);
     setPath(v[1]);
 
+    string::tolower(&v[2]);
     if (v[2] != "http/1.1" && v[2] != "http/1.0") {
       throw std::invalid_argument(
           std::string("protocol is not valid, just http/1.1 and http/1.0 is "

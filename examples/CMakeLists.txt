@@ -1,1 +1,3 @@
 add_subdirectory(simpleGetRequest)
+add_subdirectory(simpleJsonApp)
+add_subdirectory(fileServer)

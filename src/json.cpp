@@ -82,6 +82,11 @@ json::json(std::string &&s) {
   val_str = std::move(s);
 }
 
+json::json(const char *ch) {
+  m_type = type_string;
+  val_str.assign(ch);
+}
+
 json::json(bool b) {
   m_type = type_boolean;
   val_bool = b;
@@ -97,6 +102,7 @@ std::string json::getString() {
 int64_t json::getInt() {
 
   if (m_type != type_int)
+
     throw std::bad_optional_access();
   return val_int;
 }
@@ -145,6 +151,20 @@ json &json::operator[](const std::string k) {
   return *val_obj[k];
 }
 
+void json::push_back(json &val) {
+  if (m_type != type_array)
+    throw std::bad_optional_access();
+
+  val_array.push_back(ptr(new json(val)));
+}
+
+// void json::push_back(json &&val) {
+//   if (m_type != type_array)
+//     throw std::bad_optional_access();
+
+//   val_array.push_back(ptr(new json(std::move(val))));
+// }
+
 json &json::operator[](size_t ind) {
   if (m_type != type_array)
     throw std::bad_optional_access();
@@ -192,7 +212,7 @@ json::ptr json::parse(std::string &s) {
     if (tokenStack.size() && jsonStack.size()) {
       if (jsonStack.top()->m_type == type_object &&
           (tokenStack.top().second == ',' || tokenStack.top().second == '{') &&
-          s[i] != '"' && s[i] != ':')
+          s[i] != '"' && s[i] != ':' && s[i] != '}')
         throw std::invalid_argument("json not valid");
     }
 
@@ -281,11 +301,15 @@ json::ptr json::parse(std::string &s) {
       if (pos == std::string::npos && jsonStack.size()) {
         throw std::invalid_argument("json not valid");
       }
-      tmp.assign(s.begin() + i, s.begin() + pos);
+      if (pos == std::string::npos)
+        tmp.assign(s.begin() + i, s.end());
+      else
+        tmp.assign(s.begin() + i, s.begin() + pos);
       current = ptr(new json());
       current->setPrimitiveFromString(tmp);
       if (jsonStack.empty()) {
         done = true;
+        i = pos - 1;
         continue;
       } else if (jsonStack.top()->m_type == type_array) {
         jsonStack.top()->val_array.push_back(current);
@@ -299,7 +323,7 @@ json::ptr json::parse(std::string &s) {
     case 'n':
     case 't':
       pos = i + 4;
-      if (s.size() < pos + 1) {
+      if (s.size() < pos) {
         throw std::invalid_argument("json not valid");
       }
       tmp.assign(s.begin() + i, s.begin() + pos);
@@ -308,7 +332,7 @@ json::ptr json::parse(std::string &s) {
       break;
     case 'f':
       pos = i + 5;
-      if (s.size() < pos + 1) {
+      if (s.size() < pos) {
         throw std::invalid_argument("json not valid");
       }
       tmp.assign(s.begin() + i, s.begin() + pos);

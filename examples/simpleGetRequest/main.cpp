@@ -29,14 +29,12 @@ int main(int argc, char *argv[]) {
 
     int c;
     while (true) {
-      // c = getchar();
-      // if (c == 27) {
-      //   break;
-      // }
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      c = getchar();
+      if (c == 27) {
+        break;
+      }
     }
-    std::cout << "ended" << std::endl;
   } catch (std::exception &e) {
-    std::cout << "exception: " << e.what() << std::endl;
+    std::cout << e.what() << std::endl;
   }
 }

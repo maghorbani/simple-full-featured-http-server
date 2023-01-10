@@ -25,14 +25,14 @@ public:
                                          size_t len) {
     return std::string("HTTP/1.1 " + std::to_string(status) + " " +
                        statusReason(status) +
-                       "\n"
+                       "\r\n"
                        "Content-Type: " +
                        contentType +
-                       ";charset=UTF-8\n"
+                       ";charset=UTF-8\r\n"
                        "Content-Length: " +
                        std::to_string(len) +
-                       "\n"
-                       "\n");
+                       "\r\n"
+                       "\r\n");
   }
 };
 } // namespace http

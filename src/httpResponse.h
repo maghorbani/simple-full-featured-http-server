@@ -46,12 +46,22 @@ public:
   void write(const char *bin, size_t len) {
     std::string resp =
         headerHelpers::generateHttpHeaders(m_status, m_contentType, len);
-    m_socket_mutex->lock();
-    int h = ::write(m_socket, resp.c_str(), resp.length());
-    int r = ::write(m_socket, bin, len);
-    m_socket_mutex->unlock();
-    if (r == -1 || h == -1) {
-      throw std::runtime_error("error writing response");
+
+    fd_set _fd_set;
+    FD_ZERO(&_fd_set);
+    FD_SET(m_socket, &_fd_set);
+    struct timeval tv;
+    tv.tv_sec = 0;
+    tv.tv_usec = 100000;
+    int res = select(m_socket + 1, nullptr, &_fd_set, nullptr, &tv);
+    if (res > 0) {
+      m_socket_mutex->lock();
+      int h = ::write(m_socket, resp.c_str(), resp.length());
+      int r = ::write(m_socket, bin, len);
+      m_socket_mutex->unlock();
+      if (r == -1 || h == -1) {
+        throw std::runtime_error("error writing response");
+      }
     }
   }
 };
