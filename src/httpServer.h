@@ -37,7 +37,7 @@ class Server {
 public:
   Server();
   ~Server();
-  void listen(uint16_t);
+  void listen(uint16_t, uint8_t j = -1);
   void get(std::string, RequestHandler);
   void post(std::string, RequestHandler);
   void put(std::string, RequestHandler);

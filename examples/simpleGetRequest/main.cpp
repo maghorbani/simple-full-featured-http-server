@@ -25,6 +25,14 @@ int main(int argc, char *argv[]) {
         resJson["age"] = 1.5;
       res.json(resJson);
     });
+    server.get("*", [](http::Request req, http::Response res) {
+      res.status(404).html(
+          "<div style=\"display:flex; width:100% ;height:100%; "
+          "align-items:center; justify-content:center\">"
+          "<p style=\"padding:5px 20px; background-color:#ccc; "
+          "border-radius:5px\">Not Found</p>"
+          "</div>");
+    });
     server.listen(8080);
 
     int c;

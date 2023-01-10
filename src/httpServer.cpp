@@ -215,7 +215,7 @@ Server::~Server() {
   std::cout << "close: " << close(m_socket) << std::endl;
 }
 
-void Server::listen(uint16_t port) {
+void Server::listen(uint16_t port, uint8_t j) {
 
   bzero((char *)&m_address, sizeof(m_address));
   m_address.sin_family = AF_INET;
@@ -243,7 +243,14 @@ void Server::listen(uint16_t port) {
   }
   int new_socket;
 
-  for (int i{}; i < 10; i++) {
+  if (j == 255) {
+    j = std::thread::hardware_concurrency() / 2;
+  }
+  if (j == 0) {
+    j = 1;
+  }
+
+  for (int i{}; i < j; i++) {
     m_responder_mutexes.push_back(new std::mutex());
     std::thread t(
         [&]() { threadWorker(m_responder_mutexes.back(), &m_map_mutex); });
@@ -288,7 +295,8 @@ void Server::listen(uint16_t port) {
 
   acceptor.detach();
 
-  std::cout << "listening on port " << port << std::endl;
+  std::cout << "listening on port " << port << " in " << static_cast<int>(j)
+            << " threads" << std::endl;
 }
 
 void Server::get(std::string p, RequestHandler h) {
