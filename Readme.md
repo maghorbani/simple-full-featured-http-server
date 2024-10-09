@@ -116,7 +116,7 @@ using the app inside `examples/simpleGetRequest` I could handle **10,000** simul
 
 Performance
 ===========
-Well the `C` parts of this project, are `socket`, `read`, `write`, `select`, and ... parts. these functions are not thread safe, of course, reading is ok to be called from multiple threads (but should be considered, maybe locked writing, affect reading on other threads). but to write to socket, all the threads and clients should wait for a write operation to be done.
+About the `socket`, `read`, `write`, `select`, and ... parts. these functions are not thread safe, of course, reading is ok to be called from multiple threads (but should be considered, maybe locked writing, affect reading on other threads). but to write to socket, all the threads and clients should wait for a write operation to be done.
 
 so long story short, any thing other than write (write to socket, and write to multithreading management data), is multithreaded; and eventually, responding to clients could not be fully multithreaded. 
 
